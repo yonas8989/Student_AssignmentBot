@@ -1,82 +1,90 @@
 from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
 import os
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        print("🔄 Handling new file request...")
+        print("🔄 Handling new file...")
         user = update.effective_user
         name = f"{user.first_name}_{user.last_name or ''}".strip().replace(" ", "_")
         user_id = user.id
-        print(f"👤 User: {name} (ID: {user_id})")
 
-        # Create folder with debug
+        # Create user folder
         folder = f"uploads/{name}_{user_id}"
-        print(f"📂 Creating folder: {folder}")
-        os.makedirs(folder, exist_ok=True, mode=0o777)
+        os.makedirs(folder, exist_ok=True)
+
+        # Detect file type and prepare for forwarding
+        file_to_forward = None
+        file_name = ""
         
-        # File detection
         if update.message.document:
             file = update.message.document
             file_name = file.file_name
-            print(f"📄 Document detected: {file_name}")
+            file_to_forward = file
         elif update.message.photo:
             file = update.message.photo[-1]
             file_name = f"photo_{update.message.message_id}.jpg"
-            print(f"📸 Photo detected, saving as: {file_name}")
-        else:
-            print("⚠️ Unsupported file type")
-            await update.message.reply_text("⚠️ Unsupported file type")
-            return
+            file_to_forward = file  # We'll handle photos differently when forwarding
 
         # Download file
-        print("⬇️ Starting download...")
         file_obj = await context.bot.get_file(file.file_id)
-        save_path = os.path.abspath(os.path.join(folder, file_name))
-        print(f"💾 Save path: {save_path}")
-        
+        save_path = os.path.join(folder, file_name)
         await file_obj.download_to_drive(save_path)
-        print("✅ File saved locally")
-        
-        # Admin forwarding
-        try:
-            admin_id = int(os.getenv("ADMIN_CHAT_ID", "0"))  # Default to 0 if not set
-            if admin_id == 0:
-                raise ValueError("ADMIN_CHAT_ID not set")
-                
-            print(f"📤 Forwarding to admin: {admin_id}")
-            with open(save_path, 'rb') as f:
-                await context.bot.send_document(
-                    chat_id=admin_id,
-                    document=f,
-                    caption=f"New upload from {name}",
-                    filename=f"{name}_{file_name}"
-                )
-            print("📨 Forwarding complete")
-        except Exception as admin_error:
-            print(f"❌ Admin forward failed: {str(admin_error)}")
 
-        await update.message.reply_text(f"✅ File '{file_name}' processed successfully!")
-        
+        # Forward to admin
+        admin_id = int(os.getenv("ADMIN_CHAT_ID"))
+        if admin_id:
+            try:
+                if update.message.document:
+                    await context.bot.send_document(
+                        chat_id=admin_id,
+                        document=file_to_forward.file_id,
+                        caption=f"New document from {name} (ID: {user_id})"
+                    )
+                elif update.message.photo:
+                    await context.bot.send_photo(
+                        chat_id=admin_id,
+                        photo=file_to_forward.file_id,
+                        caption=f"New photo from {name} (ID: {user_id})"
+                    )
+                print(f"📨 Forwarded to admin: {admin_id}")
+            except Exception as e:
+                print(f"❌ Admin forward failed: {e}")
+
+        await update.message.reply_text(f"✅ File saved: {file_name}")
+
     except Exception as e:
-        error_msg = f"❌ Critical error: {str(e)}"
-        print(error_msg)
-        await update.message.reply_text("⚠️ An error occurred while processing your file")
+        print(f"❌ Error: {e}")
+        await update.message.reply_text("⚠️ Processing failed")
 
+async def zip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin-only /zip command"""
+    admin_id = int(os.getenv("ADMIN_CHAT_ID"))
+    if update.effective_user.id != admin_id:
+        await update.message.reply_text("❌ Admin only!")
+        return
+
+    await update.message.reply_text("⏳ Creating ZIP...")
+    from Zip_all_uploads import zip_student_uploads
+    zip_path = zip_student_uploads()
+
+    if zip_path:
+        with open(zip_path, 'rb') as f:
+            await update.message.reply_document(f, caption="📦 All uploads")
+        os.remove(zip_path)  # Cleanup
+    else:
+        await update.message.reply_text("⚠️ No files found")
 
 def main():
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-    if not bot_token:
-        raise ValueError("TELEGRAM_BOT_TOKEN not found in .env file")
-
     app = ApplicationBuilder().token(bot_token).build()
-    file_handler = MessageHandler(filters.Document.ALL | filters.PHOTO, handle_file)
-    app.add_handler(file_handler)
-    print("🤖 Bot is running...")
+    app.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, handle_file))
+    app.add_handler(CommandHandler("zip", zip_command))
+    print("🤖 Bot running...")
     app.run_polling()
 
 if __name__ == "__main__":

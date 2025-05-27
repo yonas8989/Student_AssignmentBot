@@ -12,3 +12,9 @@ uploads/
 # OS-specific files
 .DS_Store
 Thumbs.db
+
+
+__pycache__/
+uploads/
+backups/
+venv/
