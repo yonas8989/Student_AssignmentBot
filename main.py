@@ -8,63 +8,64 @@ load_dotenv()
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        # Get user information
+        print("🔄 Handling new file request...")
         user = update.effective_user
         name = f"{user.first_name}_{user.last_name or ''}".strip().replace(" ", "_")
         user_id = user.id
-        
-        # Create user-specific folder
-        folder = f"uploads/{name}_{user_id}"
-        os.makedirs(folder, exist_ok=True)
+        print(f"👤 User: {name} (ID: {user_id})")
 
-        # Determine if it's a document or photo
+        # Create folder with debug
+        folder = f"uploads/{name}_{user_id}"
+        print(f"📂 Creating folder: {folder}")
+        os.makedirs(folder, exist_ok=True, mode=0o777)
+        
+        # File detection
         if update.message.document:
             file = update.message.document
             file_name = file.file_name
+            print(f"📄 Document detected: {file_name}")
         elif update.message.photo:
-            file = update.message.photo[-1]  # Get highest resolution photo
+            file = update.message.photo[-1]
             file_name = f"photo_{update.message.message_id}.jpg"
+            print(f"📸 Photo detected, saving as: {file_name}")
         else:
+            print("⚠️ Unsupported file type")
             await update.message.reply_text("⚠️ Unsupported file type")
             return
 
-        # Download the file
+        # Download file
+        print("⬇️ Starting download...")
         file_obj = await context.bot.get_file(file.file_id)
-        save_path = os.path.join(folder, file_name)
+        save_path = os.path.abspath(os.path.join(folder, file_name))
+        print(f"💾 Save path: {save_path}")
+        
         await file_obj.download_to_drive(save_path)
+        print("✅ File saved locally")
         
-        # Send confirmation to user
-        await update.message.reply_text(
-            f"✅ File received from {user.first_name}!\n"
-            f"📄 Filename: {file_name}\n"
-            f"💾 Saved to our system."
-        )
-        
-        # Send copy to admin (you)
-        admin_id = int(os.getenv("ADMIN_CHAT_ID"))  # Your Telegram ID in Railway variables
+        # Admin forwarding
         try:
-            await context.bot.send_document(
-                chat_id=admin_id,
-                document=open(save_path, 'rb'),
-                caption=(
-                    f"📤 New upload\n"
-                    f"👤 From: {user.first_name} {user.last_name or ''}\n"
-                    f"🆔 User ID: {user_id}\n"
-                    f"📂 Filename: {file_name}"
-                ),
-                filename=f"{name}_{file_name}"
-            )
+            admin_id = int(os.getenv("ADMIN_CHAT_ID", "0"))  # Default to 0 if not set
+            if admin_id == 0:
+                raise ValueError("ADMIN_CHAT_ID not set")
+                
+            print(f"📤 Forwarding to admin: {admin_id}")
+            with open(save_path, 'rb') as f:
+                await context.bot.send_document(
+                    chat_id=admin_id,
+                    document=f,
+                    caption=f"New upload from {name}",
+                    filename=f"{name}_{file_name}"
+                )
+            print("📨 Forwarding complete")
         except Exception as admin_error:
-            print(f"Failed to send to admin: {admin_error}")
-            
-        # Log the upload
-        print(f"📥 Received {file_name} from {name} (ID: {user_id})")
-        print(f"💾 Saved to: {save_path}")
+            print(f"❌ Admin forward failed: {str(admin_error)}")
+
+        await update.message.reply_text(f"✅ File '{file_name}' processed successfully!")
         
     except Exception as e:
-        print(f"❌ Error handling file: {e}")
+        error_msg = f"❌ Critical error: {str(e)}"
+        print(error_msg)
         await update.message.reply_text("⚠️ An error occurred while processing your file")
-
 
 
 def main():
