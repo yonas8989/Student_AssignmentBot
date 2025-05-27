@@ -12,3 +12,8 @@ uploads/
 # OS-specific files
 .DS_Store
 Thumbs.db
+
+# In root .gitignore
+bot/.env
+local_tools/backup_config.ini
+archives/
